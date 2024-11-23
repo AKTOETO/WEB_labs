@@ -12,7 +12,8 @@ def client_program(host, port):
         filename="client.log",
         level=logging.INFO,
         format='%(asctime)s %(message)s',
-        encoding='utf-8'  # Указываем кодировку UTF-8
+        encoding='utf-8',  # Указываем кодировку UTF-8
+        filemode='w'
     )
     logging.info(f"Подключен к серверу {host}:{port}")
     
