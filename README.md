@@ -7,3 +7,15 @@
 ## Выполнение
 
 1. Клиент написан на python и находится в файле `./src/client.py`. Для него нужен конфигурационный файл `/src/config.ini`
+2. Сервер работает под линуксом. Надо в firewall порты открыть (через `firewall-cmd`), иначе к серверу не подключусь.
+
+Для открытия порта:
+```bash
+sudo firewall-cmd --zone=public --add-port=12345/tcp --permanent
+sudo firewall-cmd --reload
+```
+
+Для просмотра открытых портов:
+```bash
+sudo firewall-cmd --list-all
+```
