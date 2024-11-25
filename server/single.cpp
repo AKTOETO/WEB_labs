@@ -1,14 +1,14 @@
 #include "gen.h"
 
-std::ostream& log(std::ostream& out, int socket_fd, std::string msg, bool enter = 1)
+std::ostream& log(std::ostream& out, std::string name, std::string msg, bool enter = 1)
 {
-	out << "[" << getCurrentTime() << "]" << "[fd: " << socket_fd << "]: " << msg;
+	out << "[" << getCurrentTime() << "]" << "[" << name << "]: " << msg;
 	if (enter) out << std::endl;
 	return out;
 }
 
-#define LOG(msg)  log(log_file, client_socket, msg)
-#define LOGB(msg) log(log_file, client_socket, msg, 0)
+#define LOG(msg)  log(log_file, name, msg)
+#define LOGB(msg) log(log_file, name, msg, 0)
 
 
 int main() {
@@ -25,10 +25,22 @@ int main() {
 
 	listen(server_fd, 3);
 
-	log(log_file, server_fd, "Сервер запущен на: ", 0) << getLocalIPAddress() << ":" << g_port << std::endl;
+	auto serv_name = getLocalIPAddress() + ":" + std::to_string(g_port);
+	log(log_file, serv_name, "Сервер запущен");
 
 	while (true) {
-		int client_socket = accept(server_fd, NULL, NULL);
+		sockaddr_in client_addr;
+		socklen_t addr_len = sizeof(client_addr);
+		int client_socket = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
+
+		// Получаем IP и порт клиента
+		char ip_str[INET_ADDRSTRLEN];
+		inet_ntop(AF_INET, &client_addr.sin_addr, ip_str, sizeof(ip_str));
+
+		unsigned int port = ntohs(client_addr.sin_port);
+		std::string name{ ip_str };
+		name += ":" + std::to_string(port);
+
 		LOG("Клиент подключен");
 		char buffer[1024] = { 0 };
 		read(client_socket, buffer, 1024);

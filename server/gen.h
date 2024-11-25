@@ -17,7 +17,7 @@
 #include <ifaddrs.h>
 
 
-constexpr int g_port = 12345;
+constexpr const int g_port = 12345;
 constexpr const char* g_author = "\"Плоцкий Б.А. М3О-411Б-21\"";
 constexpr const char* g_log_file = "server.log";
 
