@@ -1,2 +1,4 @@
 cd build/bin/multi
-./multi
+touch ./server.log
+tail -f ./server.log &
+./multi 
