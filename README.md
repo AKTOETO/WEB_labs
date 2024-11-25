@@ -19,3 +19,8 @@ sudo firewall-cmd --reload
 ```bash
 sudo firewall-cmd --list-all
 ```
+
+Компиляция
+```bash
+g++ main.cpp -o out
+```
