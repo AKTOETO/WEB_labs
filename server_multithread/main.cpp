@@ -50,47 +50,47 @@ std::wstring fromUtf8(const std::string& str) {
 	return converter.from_bytes(str);
 }
 
-std::ostream& log(std::ostream& out, int socket_fd, std::string msg, std::mutex& mx, bool enter = 1)
+std::ostream& log(std::ostream& out, std::string name, std::string msg, std::mutex& mx, bool enter = 1)
 {
 	std::unique_lock<std::mutex> lock(mx);
-	out << "[" << getCurrentTime() << "]" << "[fd: " << socket_fd << "]: " << msg;
+	out << "[" << getCurrentTime() << "]" << "[" << name << "]: " << msg;
 	if (enter) out << std::endl;
 	return out;
 }
 
-#define LOG(lock, msg)  log(log_file, client_socket, msg, lock)
-#define LOGB(lock, msg) log(log_file, client_socket, msg, lock, 0)
+#define LOG(lock, msg)  log(log_file, name, msg, lock)
+#define LOGB(lock, msg) log(log_file, name, msg, lock, 0)
 
 std::string getLocalIPAddress() {
-    struct ifaddrs *interfaces = nullptr;
-    struct ifaddrs *ifa = nullptr;
-    std::string ipAddress;
+	struct ifaddrs* interfaces = nullptr;
+	struct ifaddrs* ifa = nullptr;
+	std::string ipAddress;
 
-    // Получаем список интерфейсов
-    if (getifaddrs(&interfaces) == -1) {
-        perror("getifaddrs");
-        return ipAddress;
-    }
+	// Получаем список интерфейсов
+	if (getifaddrs(&interfaces) == -1) {
+		perror("getifaddrs");
+		return ipAddress;
+	}
 
-    // Проходим по всем интерфейсам
-    for (ifa = interfaces; ifa != nullptr; ifa = ifa->ifa_next) {
-        // Проверяем, является ли интерфейс IPv4
-        if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET) {
-            char addressBuffer[INET_ADDRSTRLEN];
-            // Получаем IP-адрес
-            inet_ntop(AF_INET, &((struct sockaddr_in *)ifa->ifa_addr)->sin_addr, addressBuffer, sizeof(addressBuffer));
-            // Проверяем, что это не loopback адрес
-            if (strcmp(ifa->ifa_name, "lo") != 0) { // исключаем loopback интерфейс
-                ipAddress = addressBuffer; // сохраняем первый найденный IP-адрес
-                break; // выходим из цикла после нахождения первого подходящего адреса
-            }
-        }
-    }
+	// Проходим по всем интерфейсам
+	for (ifa = interfaces; ifa != nullptr; ifa = ifa->ifa_next) {
+		// Проверяем, является ли интерфейс IPv4
+		if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET) {
+			char addressBuffer[INET_ADDRSTRLEN];
+			// Получаем IP-адрес
+			inet_ntop(AF_INET, &((struct sockaddr_in*)ifa->ifa_addr)->sin_addr, addressBuffer, sizeof(addressBuffer));
+			// Проверяем, что это не loopback адрес
+			if (strcmp(ifa->ifa_name, "lo") != 0) { // исключаем loopback интерфейс
+				ipAddress = addressBuffer; // сохраняем первый найденный IP-адрес
+				break; // выходим из цикла после нахождения первого подходящего адреса
+			}
+		}
+	}
 
-    // Освобождаем память
-    freeifaddrs(interfaces);
-    
-    return ipAddress;
+	// Освобождаем память
+	freeifaddrs(interfaces);
+
+	return ipAddress;
 }
 
 int main() {
@@ -110,34 +110,48 @@ int main() {
 
 	listen(server_fd, 3);
 
-	log(log_file, server_fd, "Сервер запущен на: ", log_file_mx, 0) << getLocalIPAddress() << ":" << port << std::endl;
+	auto serv_name = getLocalIPAddress() + ":" + std::to_string(port);
+	log(log_file, serv_name, "Сервер запущен", log_file_mx);
 
 	while (true) {
-		int client_socket = accept(server_fd, NULL, NULL);
-		std::thread th([client_socket, &log_file, &author, &log_file_mx]() {
+		// подключение клиента
+		sockaddr_in client_addr;
+		socklen_t addr_len = sizeof(client_addr);
+		int client_socket = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
 
-			LOG(log_file_mx, "Клиент подключен");
-			char buffer[1024] = { 0 };
-			read(client_socket, buffer, 1024);
+		// запуск работы клиента
+		std::thread th([client_socket, &log_file, &author, &log_file_mx, client_addr]()
+			{
+				// Получаем IP и порт клиента
+				char ip_str[INET_ADDRSTRLEN];
+				inet_ntop(AF_INET, &client_addr.sin_addr, ip_str, sizeof(ip_str));
 
-			// Преобразование полученной строки в формат wstring
-			std::wstring message = fromUtf8(buffer);
-			LOGB(log_file_mx, "Получено сообщение: ") << toUtf8(message) << std::endl;
+				unsigned int port = ntohs(client_addr.sin_port);
+				std::string name{ ip_str };
+				name += ":" + std::to_string(port);
 
-			// Эмуляция работы сервера
-			sleep(2);
+				LOG(log_file_mx, "Клиент подключен");
+				char buffer[1024] = { 0 };
+				read(client_socket, buffer, 1024);
 
-			// Зеркальное отражение строки
-			std::reverse(message.begin(), message.end());
-			std::string response = toUtf8(message) + ". Сервер написал: " + author;
-			send(client_socket, response.c_str(), response.length(), 0);
-			LOGB(log_file_mx, "Отправлено сообщение: ") << response << std::endl;
+				// Преобразование полученной строки в формат wstring
+				std::wstring message = fromUtf8(buffer);
+				LOGB(log_file_mx, "Получено сообщение: ") << toUtf8(message) << std::endl;
 
-			// Задержка перед отключением
-			sleep(5);
-			close(client_socket);
-			LOG(log_file_mx, "Клиент отключен");
-		});
+				// Эмуляция работы сервера
+				sleep(2);
+
+				// Зеркальное отражение строки
+				std::reverse(message.begin(), message.end());
+				std::string response = toUtf8(message) + ". Сервер написал: " + author;
+				send(client_socket, response.c_str(), response.length(), 0);
+				LOGB(log_file_mx, "Отправлено сообщение: ") << response << std::endl;
+
+				// Задержка перед отключением
+				sleep(5);
+				close(client_socket);
+				LOG(log_file_mx, "Клиент отключен");
+			});
 		th.detach();
 	}
 
