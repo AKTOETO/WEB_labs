@@ -11,6 +11,8 @@
 #include <locale>
 #include <codecvt>
 #include <iomanip>
+#include <ifaddrs.h>
+#include <arpa/inet.h>
 
 // std::string getCurrentTime() {
 // 	auto now = std::chrono::system_clock::now();
@@ -53,26 +55,59 @@ std::ostream& log(std::ostream& out, int socket_fd, std::string msg, bool enter 
 	return out;
 }
 
-#define LOG(msg) log(logFile, client_socket, msg)
-#define LOGB(msg) log(logFile, client_socket, msg, 0)
+#define LOG(msg)  log(log_file, client_socket, msg)
+#define LOGB(msg) log(log_file, client_socket, msg, 0)
+
+
+std::string getLocalIPAddress() {
+    struct ifaddrs *interfaces = nullptr;
+    struct ifaddrs *ifa = nullptr;
+    std::string ipAddress;
+
+    // Получаем список интерфейсов
+    if (getifaddrs(&interfaces) == -1) {
+        perror("getifaddrs");
+        return ipAddress;
+    }
+
+    // Проходим по всем интерфейсам
+    for (ifa = interfaces; ifa != nullptr; ifa = ifa->ifa_next) {
+        // Проверяем, является ли интерфейс IPv4
+        if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET) {
+            char addressBuffer[INET_ADDRSTRLEN];
+            // Получаем IP-адрес
+            inet_ntop(AF_INET, &((struct sockaddr_in *)ifa->ifa_addr)->sin_addr, addressBuffer, sizeof(addressBuffer));
+            // Проверяем, что это не loopback адрес
+            if (strcmp(ifa->ifa_name, "lo") != 0) { // исключаем loopback интерфейс
+                ipAddress = addressBuffer; // сохраняем первый найденный IP-адрес
+                break; // выходим из цикла после нахождения первого подходящего адреса
+            }
+        }
+    }
+
+    // Освобождаем память
+    freeifaddrs(interfaces);
+    
+    return ipAddress;
+}
 
 int main() {
-	const int PORT = 12345;
-	const std::string AUTHOR = "\"Плоцкий Б.А. М3О-411Б-21\"";
-	std::ofstream logFile("server.log", std::ios::app);
+	const int port = 12345;
+	const std::string author = "\"Плоцкий Б.А. М3О-411Б-21\"";
+	std::ofstream log_file("server.log", std::ios::app);
 	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
 	// настройка сокета
 	struct sockaddr_in address;
 	address.sin_family = AF_INET;
 	address.sin_addr.s_addr = INADDR_ANY;
-	address.sin_port = htons(PORT);
+	address.sin_port = htons(port);
 
 	bind(server_fd, (struct sockaddr*)&address, sizeof(address));
 
 	listen(server_fd, 3);
 
-	log(logFile, 0, "Сервер запущен");
+	log(log_file, server_fd, "Сервер запущен на: ", 0) << getLocalIPAddress() << ":" << port << std::endl;
 
 	while (true) {
 		int client_socket = accept(server_fd, NULL, NULL);
@@ -89,7 +124,7 @@ int main() {
 
 		// Зеркальное отражение строки
 		std::reverse(message.begin(), message.end());
-		std::string response = toUtf8(message) + ". Сервер написал: " + AUTHOR;
+		std::string response = toUtf8(message) + ". Сервер написал: " + author;
 		send(client_socket, response.c_str(), response.length(), 0);
 		LOGB("Отправлено сообщение: ") << response << std::endl;
 
