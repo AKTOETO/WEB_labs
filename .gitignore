@@ -1,2 +1,4 @@
 *.log
 build
+chat_history.txt
+client_cache.txt

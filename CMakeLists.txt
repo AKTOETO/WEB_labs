@@ -15,5 +15,5 @@ set(SERVER_SRC "src/server.cpp" "src/msg.hpp")
 add_executable(CLIENT ${CLIENT_SRC})
 add_executable(SERVER ${SERVER_SRC})
 
-target_link_libraries(${CLIENT} boost::boost)
-target_link_libraries(${SERVER} boost::boost)
+target_link_libraries(CLIENT PUBLIC boost::boost)
+target_link_libraries(SERVER PUBLIC boost::boost)
