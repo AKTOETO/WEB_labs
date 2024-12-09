@@ -4,6 +4,7 @@
 #include <deque>
 #include <fstream>
 #include <string>
+#include <map>
 
 using namespace boost::asio;
 using ip::tcp;
@@ -12,8 +13,7 @@ class ChatServer {
 private:
     io_service& io_service_;
     tcp::acceptor acceptor_;
-    std::vector<std::shared_ptr<tcp::socket>> clients_;
-    std::vector<std::string> nicknames_;
+    std::map<std::string, std::shared_ptr<tcp::socket>> m_clients;
     std::deque<std::string> message_history_;
     std::ofstream log_file_;
 
@@ -42,6 +42,7 @@ private:
         acceptor_.async_accept(*socket,
             [this, socket](const boost::system::error_code& error) {
                 if (!error) {
+                    std::cout << "[INFO] Клиент подключается\n";
                     handle_new_client(socket);
                 }
                 start_accept();
@@ -49,12 +50,13 @@ private:
     }
 
     void handle_new_client(std::shared_ptr<tcp::socket> socket) {
-        clients_.push_back(socket);
+        //clients_.push_back(socket);
         
         // Запрос nickname
         async_write(*socket, buffer("Enter nickname: "),
             [this, socket](const boost::system::error_code& error, size_t) {
                 if (!error) {
+                    std::cout<<"[INFO] Читаем имя клиента\n";
                     read_nickname(socket);
                 }
             });
@@ -68,29 +70,44 @@ private:
                     std::string nickname{std::istreambuf_iterator<char>(&*buffer),
                                       std::istreambuf_iterator<char>()};
                     nickname = nickname.substr(0, nickname.size() - 1);
-                    nicknames_.push_back(nickname);
-                    
+                    std::cout<<"[INFO] Прочитан никнейм: "<<nickname<<std::endl;
+
+                    // добавляем пользователя в список пользователей
+                    std::pair<std::string, std::shared_ptr<tcp::socket>> pair = {std::move(nickname), socket};
+                   // m_clients[nickname] = socket;
+                   m_clients.insert(pair);
+
                     // Отправка истории сообщений
                     for (const auto& msg : message_history_) {
-                        async_write(*socket, boost::asio::buffer(msg + "\n"),
+                        async_write(*socket, boost::asio::buffer(msg),
                             [](const boost::system::error_code&, size_t){});
                     }
-                    
-                    start_read_messages(socket);
+                    start_read_messages(pair);
+                }
+                else
+                {
+                    socket->close();
                 }
             });
     }
 
-    void start_read_messages(std::shared_ptr<tcp::socket> socket) {
+    void start_read_messages(const std::pair<std::string, std::shared_ptr<tcp::socket>>& pair) {
         auto buffer = std::make_shared<boost::asio::streambuf>();
-        async_read_until(*socket, *buffer, '\n',
-            [this, socket, buffer](const boost::system::error_code& error, size_t) {
+        async_read_until(*pair.second, *buffer, '\n',
+            [this, pair, buffer](const boost::system::error_code& error, size_t) {
                 if (!error) {
                     std::string message{std::istreambuf_iterator<char>(&*buffer),
                                      std::istreambuf_iterator<char>()};
-                    broadcast_message(message, socket);
-                    start_read_messages(socket);
+                    std::cout<< message <<std::endl;
+                    broadcast_message(message, pair.second);
+                    start_read_messages(pair);
                 }
+                // закрылся удаленный сокет
+                else if(error == boost::asio::error::eof)
+                {
+                    std::cout<<"[INFO] Клиент отключен "<<pair.first<<std::endl;
+                    m_clients.erase(m_clients.find(pair.first));
+                };
             });
     }
 
@@ -102,7 +119,7 @@ private:
         if (message_history_.size() > 10)
             message_history_.pop_front();
 
-        for (auto& client : clients_) {
+        for (auto& [_, client] : m_clients) {
             if (client != sender) {
                 async_write(*client, buffer(message),
                     [](const boost::system::error_code&, size_t){});
