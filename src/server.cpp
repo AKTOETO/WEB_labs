@@ -86,19 +86,13 @@ private:
                     std::cout << "[INFO] Прочитан никнейм: [" << nickname << "]\n";
 
                     // добавляем пользователя в список пользователей
-                    std::pair<std::string, std::shared_ptr<tcp::socket>> pair = {std::move(nickname), socket};
+                    auto pair =
+                        std::make_shared<std::pair<std::string, std::shared_ptr<tcp::socket>>>(std::move(nickname), socket);
                     // m_clients[nickname] = socket;
-                    m_clients.insert(pair);
+                    m_clients.insert(*pair);
 
                     // Отправка истории сообщений
-                    for (const auto &msg : message_history_)
-                    {
-                        async_write(*socket, boost::asio::buffer(msg + "\n"),
-                                    [msg, str = pair.first](const boost::system::error_code &, size_t)
-                                    {
-                                        std::cout << "Пользователю [" << str << "] отправлено: [" << msg << "]\n";
-                                    });
-                    }
+                    send_history(pair);
                     start_read_messages(pair);
                 }
                 else
@@ -108,26 +102,39 @@ private:
             });
     }
 
-    void start_read_messages(const std::pair<std::string, std::shared_ptr<tcp::socket>> &pair)
+    void send_history(std::shared_ptr<std::pair<std::string, std::shared_ptr<tcp::socket>>> pair)
+    {
+        for (const auto &msg : message_history_)
+        {
+            async_write(
+                *pair->second, boost::asio::buffer(msg + "\n"),
+                [msg, pair](const boost::system::error_code &, size_t)
+                {
+                    std::cout << "Пользователю [" << pair->first << "] отправлено: [" << msg << "]\n";
+                });
+        }
+    }
+
+    void start_read_messages(std::shared_ptr<std::pair<std::string, std::shared_ptr<tcp::socket>>> pair)
     {
         auto buffer = std::make_shared<boost::asio::streambuf>();
         async_read_until(
-            *pair.second, *buffer, '\n',
+            *((*pair).second), *buffer, '\n',
             [this, pair, buffer](const boost::system::error_code &error, size_t len)
             {
                 if (!error)
                 {
                     std::string message(boost::asio::buffers_begin(buffer->data()),
-                                     boost::asio::buffers_begin(buffer->data()) + len - 1);
+                                        boost::asio::buffers_begin(buffer->data()) + len - 1);
                     std::cout << message << std::endl;
-                    broadcast_message(message, pair.second);
+                    broadcast_message(message, pair->second);
                     start_read_messages(pair);
                 }
                 // закрылся удаленный сокет
                 else if (error == boost::asio::error::eof)
                 {
-                    std::cout << "[INFO] Клиент отключен " << pair.first << std::endl;
-                    m_clients.erase(m_clients.find(pair.first));
+                    std::cout << "[INFO] Клиент отключен " << pair->first << std::endl;
+                    m_clients.erase(m_clients.find(pair->first));
                 };
             });
     }
