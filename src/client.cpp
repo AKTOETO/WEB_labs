@@ -47,6 +47,7 @@ public:
 		pReq req = std::make_shared<Req>(http::verb::get, tasks_endpoint, 11);
 		req->set(http::field::host, host_);
 		req->set(http::field::authorization, "Bearer " + token);
+		req->prepare_payload();
 
 		try {
 			send_request(req);
@@ -115,8 +116,14 @@ private:
 	}
 
 	void handle_response(pRes res) {
-		std::cout << "Код ответа: " <<  res->result_int() << std::endl;
-		std::cout << "Тело ответа: " << res->body() << std::endl;
+		if (res->result() != http::status::ok) {
+			std::cerr << "Error response: " << res->result_int() << " " << res->reason() << std::endl;
+			std::cerr << "Response body: " << res->body() << std::endl;
+		}
+		else {
+			std::cout << "Код ответа: " << res->result_int() << std::endl;
+			std::cout << "Тело ответа: " << res->body() << std::endl;
+		}
 	}
 
 	std::string host_;
@@ -140,7 +147,7 @@ int main() {
 		client.authenticate(username, password);
 
 		std::string token = "received_token_here"; // Замените на фактический токен
-		client.get_tasks(token);
+		//client.get_tasks(token);
 	}
 	catch (const std::exception& e) {
 		std::cerr << "Ошибка в main: " << e.what() << std::endl;

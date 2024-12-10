@@ -17,3 +17,12 @@ add_executable(SERVER ${SERVER_SRC})
 
 target_link_libraries(CLIENT PUBLIC boost::boost)
 target_link_libraries(SERVER PUBLIC boost::boost)
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -fsanitize=address")
+
+
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
+    unset(CMAKE_CXX_FLAGS_RELEASE)
+endif()
