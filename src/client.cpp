@@ -1,149 +1,150 @@
-#include <boost/asio.hpp>
 #include <iostream>
-#include <thread>
-#include <fstream>
-#include <deque>
-#include <atomic>
+#include <boost/asio.hpp>
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+#include <boost/json.hpp>
+#include <memory>
 
-using namespace boost::asio;
-using ip::tcp;
+namespace beast = boost::beast;
+namespace http = beast::http;
+namespace net = boost::asio;
+using tcp = boost::asio::ip::tcp;
 
-class ChatClient
-{
-private:
-    io_service &io_service_;
-    tcp::socket socket_;
-    std::string nickname_;
-    std::deque<std::string> local_cache_;
-    std::atomic_bool m_working;
+using Req = http::request<http::string_body>;
+using pReq = std::shared_ptr<Req>;
 
+using Res = http::response<http::string_body>;
+using pRes = std::shared_ptr<Res>;
+class RestClient {
 public:
-    ChatClient(io_service &io_service)
-        : io_service_(io_service),
-          socket_(io_service), m_working(1)
-    {
-        load_cache();
-    }
+	RestClient(const std::string& host, const std::string& port)
+		: host_(host), port_(port), resolver_(io_context_), socket_(io_context_) {
+	}
 
-    ~ChatClient()
-    {
-        dump_cache();
-    }
+	void authenticate(const std::string& username, const std::string& password) {
+		std::string auth_endpoint = "/api/auth";
+		boost::json::object auth_data = {
+			{"username", username},
+			{"password", password}
+		};
 
-    void connect(const std::string &host, int port)
-    {
-        socket_.connect(tcp::endpoint(
-            ip::address::from_string(host), port));
+		pReq req = std::make_shared<Req>(http::verb::post, auth_endpoint, 11);
+		req->set(http::field::host, host_);
+		req->set(http::field::content_type, "application/json");
+		req->body() = boost::json::serialize(auth_data);
+		req->prepare_payload();
 
-        std::array<char, 128> buffer;
-        size_t len = socket_.read_some(boost::asio::buffer(buffer));
-        std::cout << std::string(buffer.data(), len);
+		try {
+			send_request(req);
+		}
+		catch (const std::exception& e) {
+			std::cerr << "Ошибка при аутентификации: " << e.what() << std::endl;
+		}
+	}
 
-        std::getline(std::cin, nickname_);
-        socket_.write_some(boost::asio::buffer(nickname_ + "\n"));
+	void get_tasks(const std::string& token) {
+		std::string tasks_endpoint = "/api/tasks";
+		pReq req = std::make_shared<Req>(http::verb::get, tasks_endpoint, 11);
+		req->set(http::field::host, host_);
+		req->set(http::field::authorization, "Bearer " + token);
 
-        std::thread t([this]()
-                      { read_messages(); });
-        t.detach();
-
-        write_messages();
-    }
+		try {
+			send_request(req);
+		}
+		catch (const std::exception& e) {
+			std::cerr << "Ошибка при получении задач: " << e.what() << std::endl;
+		}
+	}
 
 private:
-    // загрузка кэша чата с файла
-    void load_cache()
-    {
-        std::ifstream file("client_cache.txt");
-        std::string line;
-        while (std::getline(file, line))
-        {
-            std::cout << line << std::endl;
-            local_cache_.push_back(line);
-            if (local_cache_.size() > 5)
-                local_cache_.pop_front();
-        }
-        std::cout << "cache size: " << local_cache_.size() << std::endl;
-    }
+	void send_request(pReq req) {
+		try {
+			std::cout << "Разрешение хоста: " << host_ << ", порт: " << port_ << std::endl;
 
-    void dump_cache()
-    {
-        std::cout << "dumping to 'client_cache.txt'\n";
-        std::ofstream cache_file("client_cache.txt");
-        for (auto &msg : local_cache_)
-            cache_file << msg << "\n";
-        cache_file.flush();
-        cache_file.close();
-    }
+			// Resolve the host
+			resolver_.async_resolve(host_, port_,
+				[this, req](beast::error_code ec, tcp::resolver::results_type results) {
+					if (ec) {
+						std::cerr << "Ошибка разрешения: " << ec.message() << std::endl;
+						return;
+					}
 
-    void read_messages()
-    {
-        while (m_working)
-        {
-            std::string message;
+					std::cout << "Хост разрешён. Попытка подключения..." << std::endl;
 
-            boost::system::error_code error;
-            size_t len = boost::asio::read_until(
-                socket_, boost::asio::dynamic_buffer(message),
-                '\n', error);
+					// Connect to server
+					net::async_connect(socket_, results,
+						[this, req](beast::error_code ec, const tcp::endpoint& endpoint) {
+							if (ec) {
+								std::cerr << "Ошибка подключения: " << ec.message() << std::endl;
+								return;
+							}
 
-            if (error)
-            {
-                std::cerr << "Error reading from socket: " << error.message() << std::endl;
-                break; // Прерываем цикл в случае ошибки
-            }
+							std::cout << "Подключено к: " << endpoint.address().to_string() << ":" << endpoint.port() << std::endl;
 
-            // Удаляем символ новой строки в конце сообщения
-            if (!message.empty() && message.back() == '\n')
-            {
-                message.pop_back();
-            }
+							// Send HTTP request
+							std::cout << "Отправка HTTP-запроса на: " << req->target() << std::endl;
+							http::async_write(socket_, *req,
+								[this](beast::error_code ec, std::size_t) {
+									if (ec) {
+										std::cerr << "Ошибка при записи: " << ec.message() << std::endl;
+										return;
+									}
 
-            std::cout << "[" << message << "]" << std::endl;
+									std::cout << "Запрос отправлен. Ожидание ответа..." << std::endl;
 
-            local_cache_.push_back(message);
-            while (local_cache_.size() > 5)
-                local_cache_.pop_front();
+									// Receive the response
+									pRes res(new Res);
+									http::async_read(socket_, buffer_, *res,
+										[this, res](beast::error_code ec, std::size_t) mutable {
+											if (ec) {
+												std::cerr << "Ошибка при чтении: " << ec.message() << std::endl;
+												return;
+											}
+											std::cout << "Ответ получен." << std::endl;
+											handle_response(res);
+										});
+								});
+						});
+				});
 
-            // cache_file_ << message;
-            // cache_file_.flush();
-        }
-    }
+			io_context_.run();
+		}
+		catch (const std::exception& e) {
+			std::cerr << "Исключение в send_request: " << e.what() << std::endl;
+		}
+	}
 
-    void write_messages()
-    {
-        while (m_working)
-        {
-            std::string message;
-            std::getline(std::cin, message);
-            if (message == "exit")
-                m_working = 0;
-            socket_.write_some(buffer(nickname_ + ": " + message + "\n"));
-        }
-    }
+	void handle_response(pRes res) {
+		std::cout << "Код ответа: " <<  res->result_int() << std::endl;
+		std::cout << "Тело ответа: " << res->body() << std::endl;
+	}
+
+	std::string host_;
+	std::string port_;
+	net::io_context io_context_;
+	tcp::resolver resolver_;
+	tcp::socket socket_;
+	beast::flat_buffer buffer_;
 };
 
-int main()
-{
-    try
-    {
-        boost::asio::io_service io_service;
-        ChatClient client(io_service);
+int main() {
+	std::string host = "localhost";
+	std::string port = "8080";
 
-        std::string host;
-        int port;
+	RestClient client(host, port);
 
-        std::cout << "Enter server IP: ";
-        std::cin >> host;
-        std::cout << "Enter port: ";
-        std::cin >> port;
-        std::cin.ignore();
+	std::string username = "test_user";
+	std::string password = "password"; // Укажите фактический пароль
 
-        client.connect(host, port);
-        io_service.run();
-    }
-    catch (std::exception &e)
-    {
-        std::cerr << "Exception: " << e.what() << std::endl;
-    }
-    return 0;
+	try {
+		client.authenticate(username, password);
+
+		std::string token = "received_token_here"; // Замените на фактический токен
+		client.get_tasks(token);
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Ошибка в main: " << e.what() << std::endl;
+	}
+
+	return 0;
 }
